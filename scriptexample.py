@@ -210,6 +210,7 @@ def save_state(path: str, state: dict) -> None:
 
 def build_google_service():
     from google.auth.transport.requests import Request
+    from google.auth.exceptions import RefreshError
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
@@ -366,7 +367,7 @@ try:
 except Exception:
     driver.execute_script("document.getElementById('frm_login').submit();")
 
-log_success("🔐 Accesso a GEOP eseguito")
+log_step("🔐 Credenziali inviate, verifica accesso in corso...")
 
 try:
     wait.until(
@@ -377,11 +378,17 @@ except TimeoutException:
     # Retry submit in headless mode: some pages ignore the first click.
     log_warn("Login non confermato al primo tentativo, retry submit...")
     driver.execute_script("document.getElementById('frm_login').submit();")
-    wait.until(
-        lambda d: d.find_elements(By.CLASS_NAME, "fc-toolbar")
-        or d.find_elements(By.CLASS_NAME, "fc-view-container")
-    )
+    try:
+        wait.until(
+            lambda d: d.find_elements(By.CLASS_NAME, "fc-toolbar")
+            or d.find_elements(By.CLASS_NAME, "fc-view-container")
+        )
+    except TimeoutException:
+        driver.save_screenshot("login_debug.png")
+        log_warn("Login fallito anche al secondo tentativo. Screenshot salvato: login_debug.png")
+        raise
 
+log_success("🔐 Accesso a GEOP eseguito")
 log_success("✅ Calendario caricato")
 
 # =========================
@@ -536,5 +543,7 @@ with open(OUTPUT_ICS, "w", encoding="utf-8", newline="") as f:
 print_divider("💾 EXPORT COMPLETATO")
 log_success(f"✅ Build ICS completata: {len(events_data)} eventi in {OUTPUT_ICS}")
 sync_to_google(events_data)
+
+
 
 
