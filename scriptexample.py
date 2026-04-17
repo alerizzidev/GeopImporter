@@ -210,21 +210,40 @@ def save_state(path: str, state: dict) -> None:
 
 def build_google_service():
     from google.auth.transport.requests import Request
-    from google.auth.exceptions import RefreshError
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
 
     creds = None
     if os.path.exists(GOOGLE_TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, GOOGLE_SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(GOOGLE_TOKEN_FILE, GOOGLE_SCOPES)
+        except Exception:
+            log_warn("Token Google non leggibile: verrà rigenerato.")
+            creds = None
+            try:
+                os.remove(GOOGLE_TOKEN_FILE)
+            except Exception:
+                pass
+
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+        except Exception as e:
+            msg = str(e).lower()
+            if "invalid_grant" in msg or "expired or revoked" in msg:
+                log_warn("Token Google scaduto/revocato: avvio nuova autorizzazione OAuth.")
+                creds = None
+                try:
+                    os.remove(GOOGLE_TOKEN_FILE)
+                except Exception:
+                    pass
+            else:
+                raise
 
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CLIENT_SECRET_FILE, GOOGLE_SCOPES)
-            creds = flow.run_local_server(port=0)
+        flow = InstalledAppFlow.from_client_secrets_file(GOOGLE_CLIENT_SECRET_FILE, GOOGLE_SCOPES)
+        creds = flow.run_local_server(port=0)
 
         with open(GOOGLE_TOKEN_FILE, "w", encoding="utf-8") as token:
             token.write(creds.to_json())
@@ -367,7 +386,7 @@ try:
 except Exception:
     driver.execute_script("document.getElementById('frm_login').submit();")
 
-log_step("🔐 Credenziali inviate, verifica accesso in corso...")
+log_success("🔐 Accesso a GEOP eseguito")
 
 try:
     wait.until(
@@ -378,17 +397,11 @@ except TimeoutException:
     # Retry submit in headless mode: some pages ignore the first click.
     log_warn("Login non confermato al primo tentativo, retry submit...")
     driver.execute_script("document.getElementById('frm_login').submit();")
-    try:
-        wait.until(
-            lambda d: d.find_elements(By.CLASS_NAME, "fc-toolbar")
-            or d.find_elements(By.CLASS_NAME, "fc-view-container")
-        )
-    except TimeoutException:
-        driver.save_screenshot("login_debug.png")
-        log_warn("Login fallito anche al secondo tentativo. Screenshot salvato: login_debug.png")
-        raise
+    wait.until(
+        lambda d: d.find_elements(By.CLASS_NAME, "fc-toolbar")
+        or d.find_elements(By.CLASS_NAME, "fc-view-container")
+    )
 
-log_success("🔐 Accesso a GEOP eseguito")
 log_success("✅ Calendario caricato")
 
 # =========================
@@ -543,7 +556,4 @@ with open(OUTPUT_ICS, "w", encoding="utf-8", newline="") as f:
 print_divider("💾 EXPORT COMPLETATO")
 log_success(f"✅ Build ICS completata: {len(events_data)} eventi in {OUTPUT_ICS}")
 sync_to_google(events_data)
-
-
-
 
